@@ -1,10 +1,27 @@
-import React from "react";
-import ReactDOM from "react-dom";
+import React, { useState } from "react";
+import ReactDOM from "./dom/ReactDom";
+// import ReactDOM from "react-dom";
 
-function App() {
-  return (
-    <div style={{ width: 100, height: 100, background: "#green" }}>div</div>
-  );
-}
+// function App() {
+//   // const [e, setE] = useState("123123123");
+//   return (
+//     <div>
+//       <div style={{ width: 200, height: 200, background: "green" }}>
+//         {123123}
+//       </div>
+//     </div>
+//   );
+// }
 
-ReactDOM.render(<App />, document.getElementById("root"));
+ReactDOM.render(
+  <div
+    onClick={() => {
+      console.log("123");
+    }}
+  >
+    <div style={{ height: 200, width: 200, background: "green" }}>123123</div>
+  </div>,
+  document.getElementById("root")
+);
+// const root = createRoot(document.getElementById("root"));
+// root.render(<App />);
