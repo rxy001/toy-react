@@ -2,6 +2,30 @@ import { HostRoot } from "./ReactWorkTags";
 
 let concurrentQueues = null;
 
+export function finishQueueingConcurrentUpdates() {
+  // 将 iterleaved updates 转移到 main queue。 每个队列都有一个 pending 字段和 interleaved 字段。
+  // 当他们都不为 null 时， 他们的指针都指向环状链表的最后一个节点。我们需要将 interleaved 链表添加到
+  // pending 链表的最后一个节点，形成一个环状链表。
+  if (concurrentQueues !== null) {
+    for (let i = 0; i < concurrentQueues.length; i++) {
+      const queue = concurrentQueues[i];
+      const lastInterleavedUpdate = queue.interleaved;
+      if (lastInterleavedUpdate !== null) {
+        queue.interleaved = null;
+        const firstInterleavedUpdate = lastInterleavedUpdate.next;
+        const lastPendingUpdate = queue.pending;
+        if (lastPendingUpdate !== null) {
+          const firstPendingUpdate = lastPendingUpdate.next;
+          lastPendingUpdate.next = firstInterleavedUpdate;
+          lastInterleavedUpdate.next = firstPendingUpdate;
+        }
+        queue.pending = lastInterleavedUpdate;
+      }
+    }
+    concurrentQueues = null;
+  }
+}
+
 /**
  *
  * @param {Fiber} fiber
@@ -12,9 +36,8 @@ let concurrentQueues = null;
 export function enqueueConcurrentClassUpdate(fiber, queue, update) {
   const interleaved = queue.interleaved;
   if (interleaved === null) {
-    // This is the first update. Create a circular list.
     update.next = update;
-    // 在当前渲染结束时，这个队列的 interleaved 更新将被转移到挂起的队列
+    // 在当前渲染结束时，这个队列的 interleaved 更新将被转移到 pending 的队列
     pushConcurrentUpdateQueue(queue);
   } else {
     update.next = interleaved.next;
@@ -23,6 +46,21 @@ export function enqueueConcurrentClassUpdate(fiber, queue, update) {
   queue.interleaved = update;
 
   return markUpdateLaneFromFiberToRoot(fiber);
+}
+
+export function enqueueConcurrentHookUpdate(fiber, queue, update) {
+  const interleaved = queue.interleaved;
+  if (interleaved === null) {
+    update.next = update;
+    // 在当前渲染结束时，这个队列的 interleaved 更新将被转移到 pending 的队列
+    pushConcurrentUpdateQueue(queue);
+  } else {
+    update.next = interleaved.next;
+    interleaved.next = update;
+  }
+  queue.interleaved = update;
+
+  return markUpdateLaneFromFiberToRoot(fiber, lane);
 }
 
 export function pushConcurrentUpdateQueue(queue) {

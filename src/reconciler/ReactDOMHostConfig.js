@@ -1,4 +1,10 @@
 import { setValueForStyles } from "../dom/CSSPropertyOperations";
+import { diffProperties, updateProperties } from "../dom/ReactDOMComponent";
+import {
+  precacheFiberNode,
+  updateFiberProps,
+} from "../dom/ReactDOMComponentTree";
+import setTextContent from "../dom/setTextContent";
 
 const CHILDREN = "children";
 const STYLE = "style";
@@ -14,9 +20,9 @@ export function createInstance(type, props, filber) {
       domElement.size = props.size;
     }
   }
+  precacheFiberNode(filber, domElement);
+  updateFiberProps(domElement, props);
 
-  domElement["__reactFiber$"] = filber;
-  domElement["__reactProps$"] = props;
   return domElement;
 }
 
@@ -118,4 +124,47 @@ export function shouldSetTextContent(type, props) {
       props.dangerouslySetInnerHTML !== null &&
       props.dangerouslySetInnerHTML.__html != null)
   );
+}
+
+export function prepareUpdate(domElement, type, oldProps, newProps) {
+  return diffProperties(domElement, type, oldProps, newProps);
+}
+
+export function commitUpdate(
+  domElement,
+  updatePayload,
+  type,
+  oldProps,
+  newProps
+) {
+  updateProperties(domElement, updatePayload, type, oldProps, newProps);
+  updateFiberProps(domElement, newProps);
+}
+
+export function removeChild(parent, child) {
+  parent.removeChild(child);
+}
+
+export function removeChildFromContainer(parent, child) {
+  // 18.20 源码
+  // if (container.nodeType === COMMENT_NODE) {
+  //   (container.parentNode: any).removeChild(child);
+  // } else {
+  //   container.removeChild(child);
+  // }
+  removeChild(parent, child);
+}
+
+export function resetTextContent(domElement) {
+  setTextContent(domElement, "");
+}
+
+export function createTextInstance(text, internalInstanceHandle) {
+  const textNode = document.createTextNode(text);
+  precacheFiberNode(internalInstanceHandle, textNode);
+  return textNode;
+}
+
+export function commitTextUpdate(textInstance, oldText, newText) {
+  textInstance.nodeValue = newText;
 }

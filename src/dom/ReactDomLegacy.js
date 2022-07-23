@@ -10,13 +10,14 @@ function legacyRenderSubtreeIntoContainer(
   container
 ) {
   let root = container._reactRootContainer;
-
   if (!root) {
     root = legacyCreateRootFromDOMContainer(
       container,
       children,
       parentComponent
     );
+  } else {
+    updateContainer(children, root, parentComponent);
   }
 }
 

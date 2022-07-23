@@ -6,12 +6,22 @@ import {
   FunctionComponent,
   MemoComponent,
 } from "./ReactWorkTags";
-import { Update, Placement } from "./ReactFiberFlags";
+import { Update, Placement, ContentReset } from "./ReactFiberFlags";
 import { MutationMask } from "./ReactFiberFlags";
-import { insertBefore, appendChild } from "./ReactDOMHostConfig";
+import {
+  insertBefore,
+  appendChild,
+  commitUpdate,
+  removeChild,
+  removeChildFromContainer,
+  resetTextContent,
+  commitTextUpdate,
+} from "./ReactDOMHostConfig";
+
+let hostParent = null;
+let hostParentIsContainer = false;
 
 /**
- *
  * @param {FiberRoot} root
  * @param {Fiber} finishedWork
  */
@@ -32,96 +42,66 @@ function commitMutationEffectsOnFiber(finishedWork, root) {
     case MemoComponent:
       recursivelyTraverseMutationEffects(root, finishedWork);
       commitReconciliationEffects(finishedWork);
+      return;
     case HostRoot:
       recursivelyTraverseMutationEffects(root, finishedWork);
       commitReconciliationEffects(finishedWork);
-
-      // if (flags & Update) {
-      //   if (current !== null) {
-      //     const prevRootState = current.memoizedState;
-      //     if (prevRootState.isDehydrated) {
-      //       // commitHydratedContainer(root.containerInfo);
-      //     }
-      //   }
-      // }
       return;
+    case HostText:
+      recursivelyTraverseMutationEffects(root, finishedWork);
+      commitReconciliationEffects(finishedWork);
+      if (flags & Update) {
+        const textInstance = finishedWork.stateNode;
+        const newText = finishedWork.memoizedProps;
 
+        const oldText = current !== null ? current.memoizedProps : newText;
+
+        commitTextUpdate(textInstance, oldText, newText);
+      }
+      return;
     case HostComponent: {
       recursivelyTraverseMutationEffects(root, finishedWork);
       commitReconciliationEffects(finishedWork);
 
-      // if (flags & Ref) {
-      //   if (current !== null) {
-      //     safelyDetachRef(current, current.return);
-      //   }
-      // }
-      // TODO: ContentReset gets cleared by the children during the commit
-      // phase. This is a refactor hazard because it means we must read
-      // flags the flags after `commitReconciliationEffects` has already run;
-      // the order matters. We should refactor so that ContentReset does not
-      // rely on mutating the flag during commit. Like by setting a flag
-      // during the render phase instead.
-      // if (finishedWork.flags & ContentReset) {
-      //   const instance: Instance = finishedWork.stateNode;
-      //   try {
-      //     resetTextContent(instance);
-      //   } catch (error) {
-      //     captureCommitPhaseError(finishedWork, finishedWork.return, error);
-      //   }
-      // }
+      if (finishedWork.flags & ContentReset) {
+        const instance = finishedWork.stateNode;
+        resetTextContent(instance);
+      }
 
-      // if (flags & Update) {
-      //   const instance: Instance = finishedWork.stateNode;
-      //   if (instance != null) {
-      //     // Commit the work prepared earlier.
-      //     const newProps = finishedWork.memoizedProps;
-      //     // For hydration we reuse the update path but we treat the oldProps
-      //     // as the newProps. The updatePayload will contain the real change in
-      //     // this case.
-      //     const oldProps = current !== null ? current.memoizedProps : newProps;
-      //     const type = finishedWork.type;
-      //     // TODO: Type the updateQueue to be specific to host components.
-      //     const updatePayload: null | UpdatePayload =
-      //       (finishedWork.updateQueue: any);
-      //     finishedWork.updateQueue = null;
-      //     if (updatePayload !== null) {
-      //       try {
-      //         commitUpdate(
-      //           instance,
-      //           updatePayload,
-      //           type,
-      //           oldProps,
-      //           newProps,
-      //           finishedWork
-      //         );
-      //       } catch (error) {
-      //         captureCommitPhaseError(finishedWork, finishedWork.return, error);
-      //       }
-      //     }
-      //   }
-      // }
+      if (flags & Update) {
+        const instance = finishedWork.stateNode;
+        if (instance != null) {
+          const newProps = finishedWork.memoizedProps;
+
+          const oldProps = current !== null ? current.memoizedProps : newProps;
+          const type = finishedWork.type;
+          const updatePayload = finishedWork.updateQueue;
+          finishedWork.updateQueue = null;
+          if (updatePayload !== null) {
+            commitUpdate(
+              instance,
+              updatePayload,
+              type,
+              oldProps,
+              newProps,
+              finishedWork
+            );
+          }
+        }
+      }
       return;
     }
   }
 }
 
-/**
- *
- * @param {FilberRoot} root
- * @param {Filber} finishedWork
- */
 function recursivelyTraverseMutationEffects(root, parentFiber) {
-  // const deletions = parentFiber.deletions;
-  // if (deletions !== null) {
-  //   for (let i = 0; i < deletions.length; i++) {
-  //     const childToDelete = deletions[i];
-  //     try {
-  //       commitDeletionEffects(root, parentFiber, childToDelete);
-  //     } catch (error) {
-  //       captureCommitPhaseError(childToDelete, parentFiber, error);
-  //     }
-  //   }
-  // }
+  const deletions = parentFiber.deletions;
+  if (deletions !== null) {
+    for (let i = 0; i < deletions.length; i++) {
+      const childToDelete = deletions[i];
+      commitDeletionEffects(root, parentFiber, childToDelete);
+    }
+  }
 
   if (parentFiber.subtreeFlags & MutationMask) {
     let child = parentFiber.child;
@@ -131,6 +111,7 @@ function recursivelyTraverseMutationEffects(root, parentFiber) {
     }
   }
 }
+
 function commitReconciliationEffects(finishedWork) {
   const flags = finishedWork.flags;
 
@@ -139,6 +120,93 @@ function commitReconciliationEffects(finishedWork) {
     // Clear the "placement" from effect tag so that we know that this is
     // inserted, before any life-cycles like componentDidMount gets called.
     finishedWork.flags &= ~Placement;
+  }
+}
+
+function commitDeletionEffects(root, returnFiber, deletedFiber) {
+  let parent = returnFiber;
+
+  // 我们只删除了最上面的Fiber，但是我们需要递归它的子节点来找到所有的终节点.
+
+  // 从父节点递归删除所有原生节点，拆分ref，清理已挂载的 layout effects，并调用componentWillUnmount。
+
+  // 我们只需要移除每个分支中最上面的原生子节点。 但我们仍然需要继续遍历来卸载 effects refs cwu，
+
+  // 在开始之前，找到堆栈中最近的 hostParent，这样我们就知道要从哪个实例/容器中移除子节点。
+  findParent: while (parent !== null) {
+    switch (parent.tag) {
+      case HostComponent: {
+        hostParent = parent.stateNode;
+        hostParentIsContainer = false;
+        break findParent;
+      }
+      case HostRoot: {
+        hostParent = parent.stateNode.containerInfo;
+        hostParentIsContainer = true;
+        break findParent;
+      }
+      case HostPortal: {
+        hostParent = parent.stateNode.containerInfo;
+        hostParentIsContainer = true;
+        break findParent;
+      }
+    }
+    parent = parent.return;
+  }
+
+  commitDeletionEffectsOnFiber(root, returnFiber, deletedFiber);
+
+  hostParent = null;
+  hostParentIsContainer = false;
+
+  detachFiberMutation(deletedFiber);
+}
+
+function recursivelyTraverseDeletionEffects(
+  finishedRoot,
+  nearestMountedAncestor,
+  parent
+) {
+  let child = parent.child;
+  while (child !== null) {
+    commitDeletionEffectsOnFiber(finishedRoot, nearestMountedAncestor, child);
+    child = child.sibling;
+  }
+}
+
+function commitDeletionEffectsOnFiber(
+  finishedRoot,
+  nearestMountedAncestor,
+  deletedFiber
+) {
+  // 在遍历他们的子树之前，有些 case 会在外部 switch 修改栈。
+  // 还有些更简单的例子在内部 switch 中，他们不会修改栈
+  switch (deletedFiber.tag) {
+    case HostComponent:
+      safelyDetachRef(deletedFiber, nearestMountedAncestor);
+    case HostText:
+      // 我们只需要移除最近的 hostChild。 将栈的 hostParent 设置为' null '，表示不需要删除嵌套的子元素。
+      const prevHostParent = hostParent;
+      const prevHostParentIsContainer = hostParentIsContainer;
+      hostParent = null;
+      recursivelyTraverseDeletionEffects(
+        finishedRoot,
+        nearestMountedAncestor,
+        deletedFiber
+      );
+      hostParent = prevHostParent;
+      hostParentIsContainer = prevHostParentIsContainer;
+
+      if (hostParent !== null) {
+        // Now that all the child effects have unmounted, we can remove the
+        // node from the tree.
+        if (hostParentIsContainer) {
+          removeChildFromContainer(hostParent, deletedFiber.stateNode);
+        } else {
+          debugger;
+          removeChild(hostParent, deletedFiber.stateNode);
+        }
+      }
   }
 }
 
@@ -173,6 +241,17 @@ function commitPlacement(finishedWork) {
   }
 }
 
+function safelyDetachRef(current, nearestMountedAncestor) {
+  const ref = current.ref;
+  if (ref !== null) {
+    if (typeof ref === "function") {
+      ref(null);
+    } else {
+      ref.current = null;
+    }
+  }
+}
+
 function getHostParentFiber(fiber) {
   let parent = fiber.return;
   while (parent !== null) {
@@ -191,11 +270,8 @@ function isHostParent(fiber) {
   );
 }
 
+// 向前搜索直到找到原生兄弟节点，
 function getHostSibling(fiber) {
-  // We're going to search forward into the tree until we find a sibling host
-  // node. Unfortunately, if multiple insertions are done in a row we have to
-  // search past them. This leads to exponential search for the next sibling.
-  // TODO: Find a more efficient way to do this.
   let node = fiber;
   while (true) {
     // If we didn't find anything, let's try the next sibling.
@@ -285,4 +361,38 @@ function insertOrAppendPlacementNode(node, before, parent) {
       }
     }
   }
+}
+
+function detachFiberMutation(fiber) {
+  // Cut off the return pointer to disconnect it from the tree.
+  // This enables us to detect and warn against state updates on an unmounted component.
+  // It also prevents events from bubbling from within disconnected components.
+  // 切断返回指针以断开它与树的连接。 这使我们能够检测和警告已卸载组件上的状态更新。
+  // 它还防止事件从已断开连接的组件中冒泡。
+
+  // Ideally, we should also clear the child pointer of the parent alternate to let this
+  // get GC:ed but we don't know which for sure which parent is the current
+  // one so we'll settle for GC:ing the subtree of this child.
+  // This child itself will be GC:ed when the parent updates the next time.
+  // 事实上， 我们还应该把 parent.alternate 的 childPointer 也清空，进行gc。
+  // 但是我们不能确定当前 parent 是哪一个。（ fiber 是 current tree 上的 ）,
+  // 所以我们将对这个 child 的子树进行gc。
+  // 当 parent 在下一次更新时，child 自身将会gc
+
+  // Note that we can't clear child or sibling pointers yet.
+  // They're needed for passive effects and for findDOMNode.
+  // We defer those fields, and all other cleanup, to the passive phase (see detachFiberAfterEffects).
+  // 注意，我们还不能清除子指针或兄弟指针。 它们需要用于 passive effects 和 findDOMNode。
+  // 我们将这些字段和所有其他清理工作推迟到 passive phase (参见detachFiberAfterEffects)。
+
+  // Don't reset the alternate yet, either. We need that so we can detach the
+  // alternate's fields in the passive phase. Clearing the return pointer is
+  // sufficient for findDOMNode semantics.
+  // 也不要重置 alternate。 我们需要它，这样我们才能在 passive phase 拆分 alternate的字段。
+  // 对于findDOMNode语义，清除返回指针就足够了。
+  const alternate = fiber.alternate;
+  if (alternate !== null) {
+    alternate.return = null;
+  }
+  fiber.return = null;
 }

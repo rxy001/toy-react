@@ -4,6 +4,7 @@ import {
   scheduleLegacySyncCallback,
   scheduleSyncCallback,
   flushSyncCallbacks,
+  flushSyncCallbacksOnlyInLegacyMode,
 } from "./ReactFiberSyncTaskQueue";
 import { completeWork } from "./ReactFiberCompleteWork";
 import {
@@ -35,15 +36,27 @@ export function scheduleUpdateOnFiber(root, fiber) {
   ensureRootIsScheduled(root);
 }
 
-function renderRootSync(root) {
-  if (root !== workInProgress) {
-    prepareFreshStack(root);
+function ensureRootIsScheduled(root) {
+  if (root.tag === LegacyRoot) {
+    scheduleLegacySyncCallback(performSyncWorkOnRoot.bind(null, root));
+  } else {
+    scheduleSyncCallback(performSyncWorkOnRoot.bind(null, root));
   }
-  workLoopSync();
 
-  workInProgressRoot = null;
-
-  return workInProgressRootExitStatus;
+  scheduleMicrotask(() => {
+    if ((executionContext & (RenderContext | CommitContext)) === NoContext) {
+      flushSyncCallbacks();
+    }
+  });
+  if (
+    executionContext === NoContext &&
+    (fiber.mode & ConcurrentMode) === NoMode
+  ) {
+    // 现在清空同步工作，除非我们已经在工作或在批处理中。这是故意在 scheduleUpdateOnFiber
+    // 内部而不是 scheduleCallbackForFiber 中，以保留可以调度回调而不立即启动它的能力。
+    // 我们仅对用户发起的更新执行此操作，以保留旧模式的历史行为。
+    flushSyncCallbacksOnlyInLegacyMode();
+  }
 }
 
 function performSyncWorkOnRoot(root) {
@@ -53,7 +66,23 @@ function performSyncWorkOnRoot(root) {
   root.finishedWork = finishedWork;
 
   commitRoot(root);
+
   return null;
+}
+
+function renderRootSync(root) {
+  const prevExecutionContext = executionContext;
+  executionContext |= RenderContext;
+
+  if (root !== workInProgress) {
+    prepareFreshStack(root);
+  }
+  workLoopSync();
+
+  workInProgressRoot = null;
+  executionContext = prevExecutionContext;
+
+  return workInProgressRootExitStatus;
 }
 
 function commitRoot(root) {
@@ -86,30 +115,24 @@ function commitRootImpl(root) {
     // of the effect list for each phase: all mutation effects come before all
     // layout effects, and so on.
 
-    // "before mutation" phase：递归 fiber tree, 需要更新的 fiber 则生成快照保存
+    // "before mutation" phase：递归 fiber tree, 需要更新的 fiber 则会生成快照保存
     //  const shouldFireAfterActiveInstanceBlur = commitBeforeMutationEffects(
     //   root,
     //   finishedWork,
     // );
-
     commitMutationEffects(root, finishedWork);
 
     root.current = finishedWork;
+
+    executionContext = prevExecutionContext;
   }
 }
 
-function ensureRootIsScheduled(root) {
-  if (root.tag === LegacyRoot) {
-    scheduleLegacySyncCallback(performSyncWorkOnRoot.bind(null, root));
-  } else {
-    scheduleSyncCallback(performSyncWorkOnRoot.bind(null, root));
+function workLoopSync() {
+  // Already timed out, so perform work without checking if we need to yield.
+  while (workInProgress !== null) {
+    performUnitOfWork(workInProgress);
   }
-
-  scheduleMicrotask(() => {
-    if ((executionContext & (RenderContext | CommitContext)) === NoContext) {
-      flushSyncCallbacks();
-    }
-  });
 }
 
 function performUnitOfWork(unitOfWork) {
@@ -121,17 +144,9 @@ function performUnitOfWork(unitOfWork) {
   unitOfWork.memoizedProps = unitOfWork.pendingProps;
 
   if (next === null) {
-    console.log(unitOfWork);
     completeUnitOfWork(unitOfWork);
   } else {
     workInProgress = next;
-  }
-}
-
-function workLoopSync() {
-  // Already timed out, so perform work without checking if we need to yield.
-  while (workInProgress !== null) {
-    performUnitOfWork(workInProgress);
   }
 }
 
