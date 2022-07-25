@@ -11,7 +11,7 @@ function FiberRootNode(containerInfo, tag) {
   this.context = null;
 }
 
-export function creatFiberRoot(container, tag, initialChildren = null) {
+export function createFiberRoot(container, tag, initialChildren = null) {
   const root = new FiberRootNode(container, tag);
 
   const uninitializedFiber = createHostRootFiber(tag);

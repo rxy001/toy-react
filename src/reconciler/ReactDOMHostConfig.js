@@ -1,4 +1,7 @@
-import { setValueForStyles } from "../dom/CSSPropertyOperations";
+import {
+  setValueForStyles,
+  setValueForProperty,
+} from "../dom/CSSPropertyOperations";
 import { diffProperties, updateProperties } from "../dom/ReactDOMComponent";
 import {
   precacheFiberNode,
@@ -106,10 +109,7 @@ function setInitialDOMProperties(tag, domElement, nextProps) {
       }
       // 添加事件， todo: 使用react.event 待删除
     } else if (propKey.startsWith("on") && typeof nextProp === "function") {
-      domElement.addEventListener(
-        propKey.toLowerCase().replace("on", ""),
-        nextProp
-      );
+      setValueForProperty(domElement, propKey, nextProp);
     }
   }
 }
@@ -146,7 +146,7 @@ export function removeChild(parent, child) {
 }
 
 export function removeChildFromContainer(parent, child) {
-  // 18.20 源码
+  // 18.2.0 源码
   // if (container.nodeType === COMMENT_NODE) {
   //   (container.parentNode: any).removeChild(child);
   // } else {

@@ -66,6 +66,8 @@ export function completeWork(current, workInProgress) {
   }
 }
 
+// 如果 fiber 为 mount 时，添加所有子 fiber 的真实 DOM。 如果子 fiber 的类型非原生DOM节点（eg. Component, Portal，Fragment）
+// 通过 node.child 继续找，直到找到的节点为原生 DOM 节点为止。
 function appendAllChildren(parent, workInProgress) {
   let node = workInProgress.child;
   while (node !== null) {
@@ -115,7 +117,8 @@ function updateHostText(current, workInProgress, oldText, newText) {
   }
 }
 
-// 将子 fiber 的 flags 收集到父 fiber 中，
+// 将子 fiber 的 flags 和 subtreeFlags 收集到父 fiber.subtreeFlags 中
+// TODO; 在 commit 阶段，会根据 subtreeFlags 来判断子 fiber tree 是否有 effects
 function bubbleProperties(completedWork) {
   const didBailout =
     completedWork.alternate !== null &&

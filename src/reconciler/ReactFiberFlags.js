@@ -59,10 +59,7 @@ export const MountPassiveDev = /*              */ 0b10000000000000000000000000;
 // Groups of flags that are used in the commit phase to skip over trees that
 // don't contain effects, by checking subtreeFlags.
 
-export const BeforeMutationMask =
-  // TODO: Remove Update flag from before mutation phase by re-landing Visibility
-  // flag logic (see #20043)
-  Update | Snapshot;
+export const BeforeMutationMask = Update | Snapshot;
 
 export const MutationMask =
   Placement |

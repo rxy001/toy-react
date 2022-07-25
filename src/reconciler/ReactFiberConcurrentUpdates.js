@@ -2,6 +2,7 @@ import { HostRoot } from "./ReactWorkTags";
 
 let concurrentQueues = null;
 
+// 将 iterleaved updates 添加到 pending updates 尾部 ，并重置 interleaved updates 为 null
 export function finishQueueingConcurrentUpdates() {
   // 将 iterleaved updates 转移到 main queue。 每个队列都有一个 pending 字段和 interleaved 字段。
   // 当他们都不为 null 时， 他们的指针都指向环状链表的最后一个节点。我们需要将 interleaved 链表添加到
@@ -27,7 +28,8 @@ export function finishQueueingConcurrentUpdates() {
 }
 
 /**
- *
+ * 存放 classComponent update
+ * 通过 update.next，将所有 update 对象连接起来形成单向链表。
  * @param {Fiber} fiber
  * @param {UpdateQueue.shared} queue
  * @param {Update} update
@@ -48,6 +50,7 @@ export function enqueueConcurrentClassUpdate(fiber, queue, update) {
   return markUpdateLaneFromFiberToRoot(fiber);
 }
 
+// 存放 functionComponent update (useState)
 export function enqueueConcurrentHookUpdate(fiber, queue, update) {
   const interleaved = queue.interleaved;
   if (interleaved === null) {
@@ -60,7 +63,7 @@ export function enqueueConcurrentHookUpdate(fiber, queue, update) {
   }
   queue.interleaved = update;
 
-  return markUpdateLaneFromFiberToRoot(fiber, lane);
+  return markUpdateLaneFromFiberToRoot(fiber);
 }
 
 export function pushConcurrentUpdateQueue(queue) {

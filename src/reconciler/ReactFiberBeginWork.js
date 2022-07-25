@@ -9,6 +9,8 @@ import { ContentReset } from "./ReactFiberFlags";
 import { renderWithHooks } from "./ReactFiberHooks";
 import { shouldSetTextContent } from "./ReactDOMHostConfig";
 
+let didReceiveUpdate = false;
+
 /**
  * 递归遍历 react.elements 构成 fiber 树，
  * @param {Fiber} current
@@ -29,27 +31,9 @@ export function beginWork(current, workInProgress) {
     case HostComponent:
       return updateHostComponent(current, workInProgress);
     case FunctionComponent: {
-      function resolveDefaultProps(Component, baseProps) {
-        if (Component && Component.defaultProps) {
-          // Resolve default props. Taken from ReactElement
-          const props = Object.assign({}, baseProps);
-          const defaultProps = Component.defaultProps;
-          for (const propName in defaultProps) {
-            if (props[propName] === undefined) {
-              props[propName] = defaultProps[propName];
-            }
-          }
-          return props;
-        }
-        return baseProps;
-      }
-
       const Component = workInProgress.type;
-      const unresolvedProps = workInProgress.pendingProps;
-      const resolvedProps =
-        workInProgress.elementType === Component
-          ? unresolvedProps
-          : resolveDefaultProps(Component, unresolvedProps);
+      const resolvedProps = workInProgress.pendingProps;
+
       return updateFunctionComponent(
         current,
         workInProgress,
@@ -77,9 +61,26 @@ function updateHostRoot(current, workInProgress) {
   // cloneUpdateQueue(current, workInProgress);
   // processUpdateQueue(workInProgress, nextProps, null, renderLanes);
 
-  const nextChildren =
-    workInProgress.updateQueue.shared.interleaved.payload.element;
+  const prevChildren = workInProgress.memoizedState?.element;
+
+  const pendingProps = workInProgress.updateQueue.shared.pending;
+  if (pendingProps) {
+    workInProgress.memoizedState = {
+      element: pendingProps.payload.element,
+    };
+
+    workInProgress.updateQueue.shared.pending = null;
+  }
+  const nextChildren = workInProgress.memoizedState.element;
+
+  // if (prevChildren === nextChildren) {
+  //   return workInProgress.child;
+  // }
+
+  // const prev = workInProgress.child;
+
   reconcileChildren(current, workInProgress, nextChildren);
+
   return workInProgress.child;
 }
 
@@ -103,7 +104,27 @@ function updateHostComponent(current, workInProgress) {
   return workInProgress.child;
 }
 
-function updateFunctionComponent() {}
+function updateFunctionComponent(
+  current,
+  workInProgress,
+  Component,
+  nextProps
+) {
+  let nextChildren = renderWithHooks(
+    current,
+    workInProgress,
+    Component,
+    nextProps
+  );
+
+  // if (current !== null && !didReceiveUpdate) {
+  //   bailoutHooks(current, workInProgress, renderLanes);
+  //   return bailoutOnAlreadyFinishedWork(current, workInProgress, renderLanes);
+  // }
+
+  reconcileChildren(current, workInProgress, nextChildren);
+  return workInProgress.child;
+}
 
 function reconcileChildren(current, workInProgress, nextChildren) {
   if (current === null) {
@@ -115,4 +136,8 @@ function reconcileChildren(current, workInProgress, nextChildren) {
       nextChildren
     );
   }
+}
+
+export function markWorkInProgressReceivedUpdate() {
+  didReceiveUpdate = true;
 }

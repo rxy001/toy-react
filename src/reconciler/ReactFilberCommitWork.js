@@ -30,7 +30,7 @@ export function commitMutationEffects(root, finishedWork) {
 }
 
 /**
- *
+ * 挂载或更新或删除 fiber 对应的真实 dom 节点
  * @param {Fiber} finishedWork
  * @param {FiberRoot} root
  */
@@ -94,9 +94,11 @@ function commitMutationEffectsOnFiber(finishedWork, root) {
   }
 }
 
+// 深度优先算法递归遍历 fiber tree
 function recursivelyTraverseMutationEffects(root, parentFiber) {
   const deletions = parentFiber.deletions;
   if (deletions !== null) {
+    // 可以在任何 fiber 类型上调度 Deletions effects。它们需要在 children effects 触发之前发生。
     for (let i = 0; i < deletions.length; i++) {
       const childToDelete = deletions[i];
       commitDeletionEffects(root, parentFiber, childToDelete);
@@ -203,7 +205,6 @@ function commitDeletionEffectsOnFiber(
         if (hostParentIsContainer) {
           removeChildFromContainer(hostParent, deletedFiber.stateNode);
         } else {
-          debugger;
           removeChild(hostParent, deletedFiber.stateNode);
         }
       }
@@ -270,7 +271,7 @@ function isHostParent(fiber) {
   );
 }
 
-// 向前搜索直到找到原生兄弟节点，
+// 向下搜索直到找到原生兄弟节点，
 function getHostSibling(fiber) {
   let node = fiber;
   while (true) {

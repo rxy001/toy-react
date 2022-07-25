@@ -1,4 +1,4 @@
-import { creatFiberRoot } from "./ReactFiberRoot";
+import { createFiberRoot } from "./ReactFiberRoot";
 import { createUpdate, enqueueUpdate } from "./ReactFiberClassUpdateQueue";
 import { scheduleUpdateOnFiber } from "./ReactFiberWorkLoop";
 
@@ -10,7 +10,7 @@ import { scheduleUpdateOnFiber } from "./ReactFiberWorkLoop";
  * @returns {FiberRoot}
  */
 export function createContainer(container, LegacyRoot) {
-  return creatFiberRoot(container, LegacyRoot);
+  return createFiberRoot(container, LegacyRoot);
 }
 
 export function updateContainer(element, container, parentComponent) {

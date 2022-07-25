@@ -18,6 +18,7 @@ import {
 import { LegacyRoot } from "../shared/ReactRootTags";
 import { scheduleMicrotask } from "./ReactDOMHostConfig";
 import { commitMutationEffects } from "./ReactFilberCommitWork";
+import { finishQueueingConcurrentUpdates } from "./ReactFiberConcurrentUpdates";
 
 let workInProgress = null;
 
@@ -33,10 +34,10 @@ const RootCompleted = 5;
 let workInProgressRootExitStatus = RootInProgress;
 
 export function scheduleUpdateOnFiber(root, fiber) {
-  ensureRootIsScheduled(root);
+  ensureRootIsScheduled(root, fiber);
 }
 
-function ensureRootIsScheduled(root) {
+function ensureRootIsScheduled(root, fiber) {
   if (root.tag === LegacyRoot) {
     scheduleLegacySyncCallback(performSyncWorkOnRoot.bind(null, root));
   } else {
@@ -48,10 +49,7 @@ function ensureRootIsScheduled(root) {
       flushSyncCallbacks();
     }
   });
-  if (
-    executionContext === NoContext &&
-    (fiber.mode & ConcurrentMode) === NoMode
-  ) {
+  if (executionContext === NoContext) {
     // 现在清空同步工作，除非我们已经在工作或在批处理中。这是故意在 scheduleUpdateOnFiber
     // 内部而不是 scheduleCallbackForFiber 中，以保留可以调度回调而不立即启动它的能力。
     // 我们仅对用户发起的更新执行此操作，以保留旧模式的历史行为。
@@ -129,12 +127,12 @@ function commitRootImpl(root) {
 }
 
 function workLoopSync() {
-  // Already timed out, so perform work without checking if we need to yield.
   while (workInProgress !== null) {
     performUnitOfWork(workInProgress);
   }
 }
 
+// 采用深度优先算法递归 fiber tree.
 function performUnitOfWork(unitOfWork) {
   const current = unitOfWork.alternate;
 
@@ -156,6 +154,9 @@ function prepareFreshStack(root) {
   workInProgressRoot = root;
   const rootWorkInProgress = createWorkInProgress(root.current, null);
   workInProgress = rootWorkInProgress;
+
+  // 将新的 update 添加到 queue.pending 链表尾部
+  finishQueueingConcurrentUpdates();
 
   return rootWorkInProgress;
 }

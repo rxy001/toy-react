@@ -32,7 +32,14 @@ export function setValueForStyles(node, styles) {
 }
 
 export function setValueForProperty(node, name, value) {
-  if (value === null) {
+  if (name.startsWith("on")) {
+    const eventName = name.toLowerCase().replace("on", "");
+    node.removeEventListener(eventName, node._eventCallback);
+    if (value) {
+      node.addEventListener(eventName, value);
+      node._eventCallback = value;
+    }
+  } else if (value === null) {
     node.removeAttribute(name);
   } else {
     node.setAttribute(name, "" + value);
