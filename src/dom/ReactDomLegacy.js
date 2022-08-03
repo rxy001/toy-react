@@ -3,6 +3,7 @@ import {
   updateContainer,
 } from "../reconciler/ReactFiberReconciler";
 import { LegacyRoot } from "../shared/ReactRootTags";
+import { flushSync } from "../reconciler/ReactFiberWorkLoop";
 
 function legacyRenderSubtreeIntoContainer(
   parentComponent,
@@ -11,11 +12,7 @@ function legacyRenderSubtreeIntoContainer(
 ) {
   let root = container._reactRootContainer;
   if (!root) {
-    root = legacyCreateRootFromDOMContainer(
-      container,
-      children,
-      parentComponent
-    );
+    legacyCreateRootFromDOMContainer(container, children, parentComponent);
   } else {
     updateContainer(children, root, parentComponent);
   }
@@ -37,10 +34,9 @@ function legacyCreateRootFromDOMContainer(
 
   container._reactRootContainer = root;
 
-  // const rootContainerElement =
-  //   container.nodeType === COMMENT_NODE ? container.parentNode : container;
-
-  updateContainer(initialChildren, root, parentComponent);
+  flushSync(() => {
+    updateContainer(initialChildren, root, parentComponent);
+  });
 }
 
 export default function render(element, container) {

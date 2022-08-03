@@ -6,8 +6,13 @@ import {
   FunctionComponent,
   MemoComponent,
 } from "./ReactWorkTags";
-import { Update, Placement, ContentReset } from "./ReactFiberFlags";
-import { MutationMask } from "./ReactFiberFlags";
+import { Update, Placement, ContentReset, Passive } from "./ReactFiberFlags";
+import {
+  MutationMask,
+  ChildDeletion,
+  NoFlags,
+  PassiveMask,
+} from "./ReactFiberFlags";
 import {
   insertBefore,
   appendChild,
@@ -18,8 +23,18 @@ import {
   commitTextUpdate,
 } from "./ReactDOMHostConfig";
 
+import {
+  Passive as HookPassive,
+  HasEffect as HookHasEffect,
+} from "./ReactHookEffectTags";
+
+// 卸载节点时，递归 Fiber 子树并清除引用。每个级别都比前一个级别清理更多的 fiber 字段。
+// 据我们所知，React 本身并没有泄漏，但由于 Fiber 包含循环，即使产品代码中的单个泄漏也会导致我们保留大量内存。
+const deletedTreeCleanUpLevel = 3;
 let hostParent = null;
 let hostParentIsContainer = false;
+
+let nextEffect = null;
 
 /**
  * @param {FiberRoot} root
@@ -30,7 +45,7 @@ export function commitMutationEffects(root, finishedWork) {
 }
 
 /**
- * 挂载或更新或删除 fiber 对应的真实 dom 节点
+ * 挂载或更新或删除 fiber 上对应的真实 dom 节点
  * @param {Fiber} finishedWork
  * @param {FiberRoot} root
  */
@@ -253,6 +268,310 @@ function safelyDetachRef(current, nearestMountedAncestor) {
   }
 }
 
+export function commitPassiveUnmountEffects(firstChild) {
+  nextEffect = firstChild;
+  commitPassiveUnmountEffects_begin();
+}
+
+// 深度优先遍历，
+// 1.先检查该 fiber 是否有删除的子 fiber,
+// 2.有, 还是深度优先遍历其子 fiber, 调用 useState 的 destory，并清空 fiber fields。
+// 3.没有，就继续遍历直至叶节点,调用 useState 的 destory，
+// 4.通过 sibling 重复上述操作.
+function commitPassiveUnmountEffects_begin() {
+  while (nextEffect !== null) {
+    const fiber = nextEffect;
+    const child = fiber.child;
+
+    if ((nextEffect.flags & ChildDeletion) !== NoFlags) {
+      const deletions = fiber.deletions;
+      if (deletions !== null) {
+        for (let i = 0; i < deletions.length; i++) {
+          const fiberToDelete = deletions[i];
+          nextEffect = fiberToDelete;
+          commitPassiveUnmountEffectsInsideOfDeletedTree_begin(
+            fiberToDelete,
+            fiber
+          );
+        }
+
+        if (deletedTreeCleanUpLevel >= 1) {
+          // A fiber was deleted from this parent fiber, but it's still part of
+          // the previous (alternate) parent fiber's list of children. Because
+          // children are a linked list, an earlier sibling that's still alive
+          // will be connected to the deleted fiber via its `alternate`:
+          //
+          //   live fiber
+          //   --alternate--> previous live fiber
+          //   --sibling--> deleted fiber
+          //
+          // We can't disconnect `alternate` on nodes that haven't been deleted
+          // yet, but we can disconnect the `sibling` and `child` pointers.
+          const previousFiber = fiber.alternate;
+          if (previousFiber !== null) {
+            let detachedChild = previousFiber.child;
+            if (detachedChild !== null) {
+              previousFiber.child = null;
+              do {
+                const detachedSibling = detachedChild.sibling;
+                detachedChild.sibling = null;
+                detachedChild = detachedSibling;
+              } while (detachedChild !== null);
+            }
+          }
+        }
+
+        nextEffect = fiber;
+      }
+    }
+
+    if ((fiber.subtreeFlags & PassiveMask) !== NoFlags && child !== null) {
+      child.return = fiber;
+      nextEffect = child;
+    } else {
+      commitPassiveUnmountEffects_complete();
+    }
+  }
+}
+
+// 处理未删除的 fiber 的 useEffect
+function commitPassiveUnmountEffects_complete() {
+  while (nextEffect !== null) {
+    const fiber = nextEffect;
+    if ((fiber.flags & Passive) !== NoFlags) {
+      commitPassiveUnmountOnFiber(fiber);
+    }
+
+    const sibling = fiber.sibling;
+    if (sibling !== null) {
+      sibling.return = fiber.return;
+      nextEffect = sibling;
+      return;
+    }
+
+    nextEffect = fiber.return;
+  }
+}
+
+function commitPassiveUnmountOnFiber(finishedWork) {
+  switch (finishedWork.tag) {
+    case FunctionComponent:
+      commitHookEffectListUnmount(
+        HookPassive | HookHasEffect,
+        finishedWork,
+        finishedWork.return
+      );
+  }
+}
+
+function commitPassiveUnmountEffectsInsideOfDeletedTree_begin(
+  deletedSubtreeRoot,
+  nearestMountedAncestor
+) {
+  // first: nextEffect === deletedSubtreeRoot
+  while (nextEffect !== null) {
+    const fiber = nextEffect;
+
+    // 被删除的 fiber 的 useEffect destory 在这调用
+    // Deletion effects fire in parent -> child order
+    commitPassiveUnmountInsideDeletedTreeOnFiber(fiber, nearestMountedAncestor);
+
+    const child = fiber.child;
+
+    if (child !== null) {
+      child.return = fiber;
+      nextEffect = child;
+    } else {
+      commitPassiveUnmountEffectsInsideOfDeletedTree_complete(
+        deletedSubtreeRoot
+      );
+    }
+  }
+}
+
+// 清空 fiber fields，断开链状结构
+function commitPassiveUnmountEffectsInsideOfDeletedTree_complete(
+  deletedSubtreeRoot
+) {
+  // first: nextEffect 为 deletedSubtreeRoot 深度优先搜索的 第一个叶节点
+  while (nextEffect !== null) {
+    const fiber = nextEffect;
+    const sibling = fiber.sibling;
+    const returnFiber = fiber.return;
+
+    if (deletedTreeCleanUpLevel >= 2) {
+      // Recursively traverse the entire deleted tree and clean up fiber fields.
+      // This is more aggressive than ideal, and the long term goal is to only
+      // have to detach the deleted tree at the root.
+      detachFiberAfterEffects(fiber);
+      if (fiber === deletedSubtreeRoot) {
+        nextEffect = null;
+        return;
+      }
+    }
+
+    if (sibling !== null) {
+      sibling.return = returnFiber;
+      nextEffect = sibling;
+      return;
+    }
+
+    nextEffect = returnFiber;
+  }
+}
+
+function commitPassiveUnmountInsideDeletedTreeOnFiber(
+  current,
+  nearestMountedAncestor
+) {
+  switch (current.tag) {
+    case FunctionComponent:
+      commitHookEffectListUnmount(HookPassive, current, nearestMountedAncestor);
+      break;
+  }
+}
+
+function commitHookEffectListUnmount(
+  flags,
+  finishedWork,
+  nearestMountedAncestor
+) {
+  const updateQueue = finishedWork.updateQueue;
+  const lastEffect = updateQueue !== null ? updateQueue.lastEffect : null;
+  if (lastEffect !== null) {
+    const firstEffect = lastEffect.next;
+    let effect = firstEffect;
+    do {
+      if ((effect.tag & flags) === flags) {
+        // Unmount
+        const destroy = effect.destroy;
+        effect.destroy = undefined;
+        if (destroy !== undefined) {
+          safelyCallDestroy(finishedWork, nearestMountedAncestor, destroy);
+        }
+      }
+      effect = effect.next;
+    } while (effect !== firstEffect);
+  }
+}
+
+export function commitPassiveMountEffects(root, finishedWork) {
+  nextEffect = finishedWork;
+  commitPassiveMountEffects_begin(finishedWork, root);
+}
+
+function commitPassiveMountEffects_begin(subtreeRoot, root) {
+  while (nextEffect !== null) {
+    const fiber = nextEffect;
+    const firstChild = fiber.child;
+    if ((fiber.subtreeFlags & PassiveMask) !== NoFlags && firstChild !== null) {
+      firstChild.return = fiber;
+      nextEffect = firstChild;
+    } else {
+      commitPassiveMountEffects_complete(subtreeRoot, root);
+    }
+  }
+}
+
+function commitPassiveMountEffects_complete(subtreeRoot, root) {
+  while (nextEffect !== null) {
+    const fiber = nextEffect;
+
+    if ((fiber.flags & Passive) !== NoFlags) {
+      commitPassiveMountOnFiber(root, fiber);
+    }
+
+    if (fiber === subtreeRoot) {
+      nextEffect = null;
+      return;
+    }
+
+    const sibling = fiber.sibling;
+    if (sibling !== null) {
+      sibling.return = fiber.return;
+      nextEffect = sibling;
+      return;
+    }
+
+    nextEffect = fiber.return;
+  }
+}
+
+function commitPassiveMountOnFiber(finishedRoot, finishedWork) {
+  switch (finishedWork.tag) {
+    case FunctionComponent: {
+      commitHookEffectListMount(HookPassive | HookHasEffect, finishedWork);
+      break;
+    }
+  }
+}
+function commitHookEffectListMount(flags, finishedWork) {
+  const updateQueue = finishedWork.updateQueue;
+  const lastEffect = updateQueue !== null ? updateQueue.lastEffect : null;
+  if (lastEffect !== null) {
+    const firstEffect = lastEffect.next;
+    let effect = firstEffect;
+    do {
+      if ((effect.tag & flags) === flags) {
+        // Mount
+        const create = effect.create;
+        effect.destroy = create();
+      }
+      effect = effect.next;
+    } while (effect !== firstEffect);
+  }
+}
+
+function detachFiberAfterEffects(fiber) {
+  const alternate = fiber.alternate;
+  if (alternate !== null) {
+    fiber.alternate = null;
+    detachFiberAfterEffects(alternate);
+  }
+
+  // Note: Defensively using negation instead of < in case
+  // `deletedTreeCleanUpLevel` is undefined.
+  // Clear cyclical Fiber fields. This level alone is designed to roughly
+  // approximate the planned Fiber refactor. In that world, `setState` will be
+  // bound to a special "instance" object instead of a Fiber. The Instance
+  // object will not have any of these fields. It will only be connected to
+  // the fiber tree via a single link at the root. So if this level alone is
+  // sufficient to fix memory issues, that bodes well for our plans.
+  fiber.child = null;
+  fiber.deletions = null;
+  fiber.sibling = null;
+
+  // The `stateNode` is cyclical because on host nodes it points to the host
+  // tree, which has its own pointers to children, parents, and siblings.
+  // The other host nodes also point back to fibers, so we should detach that
+  // one, too.
+
+  fiber.stateNode = null;
+
+  // I'm intentionally not clearing the `return` field in this level. We
+  // already disconnect the `return` pointer at the root of the deleted
+  // subtree (in `detachFiberMutation`). Besides, `return` by itself is not
+  // cyclical — it's only cyclical when combined with `child`, `sibling`, and
+  // `alternate`. But we'll clear it in the next level anyway, just in case.
+
+  if (deletedTreeCleanUpLevel >= 3) {
+    // Theoretically, nothing in here should be necessary, because we already
+    // disconnected the fiber from the tree. So even if something leaks this
+    // particular fiber, it won't leak anything else
+    //
+    // The purpose of this branch is to be super aggressive so we can measure
+    // if there's any difference in memory impact. If there is, that could
+    // indicate a React leak we don't know about.
+    fiber.return = null;
+    fiber.dependencies = null;
+    fiber.memoizedProps = null;
+    fiber.memoizedState = null;
+    fiber.pendingProps = null;
+    fiber.stateNode = null;
+    fiber.updateQueue = null;
+  }
+}
+
 function getHostParentFiber(fiber) {
   let parent = fiber.return;
   while (parent !== null) {
@@ -362,6 +681,10 @@ function insertOrAppendPlacementNode(node, before, parent) {
       }
     }
   }
+}
+
+function safelyCallDestroy(current, nearestMountedAncestor, destroy) {
+  destroy();
 }
 
 function detachFiberMutation(fiber) {

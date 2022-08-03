@@ -2,6 +2,14 @@ import ReactSharedInternals from "../shared/ReactSharedInternals";
 import { scheduleUpdateOnFiber } from "./ReactFiberWorkLoop";
 import { enqueueConcurrentHookUpdate } from "./ReactFiberConcurrentUpdates";
 import { markWorkInProgressReceivedUpdate } from "./ReactFiberBeginWork";
+import {
+  Passive as PassiveEffect,
+  PassiveStatic as PassiveStaticEffect,
+} from "./ReactFiberFlags";
+import {
+  Passive as HookPassive,
+  HasEffect as HookHasEffect,
+} from "./ReactHookEffectTags";
 
 // workInProgress fiber 。将它命名为不同的名称，以将其与 workInProgress fiber 区分开来。
 let currentlyRenderingFiber = null;
@@ -10,7 +18,7 @@ let didScheduleRenderPhaseUpdate = false;
 
 // hooks 以链表的形式保存在 fiber.memoizedState 字段中。current hook 链表 是属于 current fiber,
 // work-in-progress hook 链表是一个新的链表，将添加到 work-in-progress fiber
-// currentHook: 上一个 hooks （eg: useState) 所对应的 current fiber 上 hook 对象。
+// currentHook: 上一个 hook （eg: useState) 所对应的 current fiber 上 hook 对象。
 let currentHook = null;
 
 // workInProgressHook: 上一个 hooks 所使用的最新 hook 对象，
@@ -127,6 +135,7 @@ function basicStateReducer(s, a) {
   return typeof a === "function" ? a(s) : a;
 }
 
+// useState 的 memoizedState 是个值.
 function mountState(initialState) {
   // 将 hook 挂载到当前 fiber 的 memoizedState。
   const hook = mountWorkInProgressHook();
@@ -150,6 +159,10 @@ function mountState(initialState) {
   ));
 
   return [hook.memoizedState, dispatch];
+}
+
+function updateState(initialState) {
+  return updateReducer(basicStateReducer, initialState);
 }
 
 // 创建 update ，如果新的状态与当前的状态相同，或许可以完全跳过。
@@ -193,6 +206,7 @@ function dispatchSetState(fiber, queue, action) {
         return;
       }
     }
+
     const root = enqueueConcurrentHookUpdate(fiber, queue, update);
     if (root !== null) {
       scheduleUpdateOnFiber(root, fiber);
@@ -200,19 +214,71 @@ function dispatchSetState(fiber, queue, action) {
   }
 }
 
-function mountReducer(initialState) {}
-function mountEffect(initialState) {}
+function mountEffect(create, deps) {
+  return mountEffectImpl(
+    PassiveEffect | PassiveStaticEffect,
+    HookPassive,
+    create,
+    deps
+  );
+}
+
 function updateEffect(initialState) {}
 
-// 创建新的 hook 链表，遍历 update queue， 更新 hook 对象的值。
+// useEffect 的 memoizedState 是个 effect 对象.
+function mountEffectImpl(fiberFlags, hookFlags, create, deps) {
+  const hook = mountWorkInProgressHook();
+  const nextDeps = deps === undefined ? null : deps;
+  currentlyRenderingFiber.flags |= fiberFlags;
+  hook.memoizedState = pushEffect(
+    HookHasEffect | hookFlags,
+    create,
+    undefined,
+    nextDeps
+  );
+}
+
+function pushEffect(tag, create, destroy, deps) {
+  const effect = {
+    tag,
+    create,
+    destroy,
+    deps,
+    // Circular
+    next: null,
+  };
+  let componentUpdateQueue = currentlyRenderingFiber.updateQueue;
+  if (componentUpdateQueue === null) {
+    componentUpdateQueue = createFunctionComponentUpdateQueue();
+    currentlyRenderingFiber.updateQueue = componentUpdateQueue;
+    componentUpdateQueue.lastEffect = effect.next = effect;
+  } else {
+    const lastEffect = componentUpdateQueue.lastEffect;
+    if (lastEffect === null) {
+      componentUpdateQueue.lastEffect = effect.next = effect;
+    } else {
+      const firstEffect = lastEffect.next;
+      lastEffect.next = effect;
+      effect.next = firstEffect;
+      componentUpdateQueue.lastEffect = effect;
+    }
+  }
+  return effect;
+}
+
+function mountReducer(initialState) {}
+
+// 创建新的 hook 链表，遍历 update queue， 更新 hook 对象的 memoizedState。
 function updateReducer(reducer, initial, init) {
   const hook = updateWorkInProgressHook();
   const queue = hook.queue;
 
   queue.lastRenderedReducer = reducer;
+
   const current = currentHook;
 
   // The last rebase update that is NOT part of the base state.
+  // baseQueue. baseState 在 legacy mode 中是无用的。可暂时忽略
   let baseQueue = current.baseQueue;
 
   // The last pending update that hasn't been processed yet.
@@ -238,9 +304,9 @@ function updateReducer(reducer, initial, init) {
     const first = baseQueue.next;
     let newState = current.baseState;
 
-    let newBaseState = null;
-    let newBaseQueueFirst = null;
-    let newBaseQueueLast = null;
+    // let newBaseState = null;
+    // let newBaseQueueFirst = null;
+    // let newBaseQueueLast = null;
     let update = first;
     do {
       // Process this update.
@@ -256,11 +322,11 @@ function updateReducer(reducer, initial, init) {
       update = update.next;
     } while (update !== null && update !== first);
 
-    if (newBaseQueueLast === null) {
-      newBaseState = newState;
-    } else {
-      newBaseQueueLast.next = newBaseQueueFirst;
-    }
+    // if (newBaseQueueLast === null) {
+    //   newBaseState = newState;
+    // } else {
+    //   newBaseQueueLast.next = newBaseQueueFirst;
+    // }
 
     // Mark that the fiber performed work, but only if the new state is
     // different from the current state.
@@ -269,38 +335,13 @@ function updateReducer(reducer, initial, init) {
     }
 
     hook.memoizedState = newState;
-    hook.baseState = newBaseState;
-    hook.baseQueue = newBaseQueueLast;
-
+    // hook.baseState = newBaseState;
+    // hook.baseQueue = newBaseQueueLast;
     queue.lastRenderedState = newState;
   }
 
-  // Interleaved updates are stored on a separate queue. We aren't going to
-  // process them during this render, but we do need to track which lanes
-  // are remaining.
-  // const lastInterleaved = queue.interleaved;
-  // if (lastInterleaved !== null) {
-  //   let interleaved = lastInterleaved;
-  //   do {
-  //     const interleavedLane = interleaved.lane;
-  //     currentlyRenderingFiber.lanes = mergeLanes(
-  //       currentlyRenderingFiber.lanes,
-  //       interleavedLane
-  //     );
-  //     markSkippedUpdateLanes(interleavedLane);
-  //     interleaved = interleaved.next;
-  //   } while (interleaved !== lastInterleaved);
-  // } else if (baseQueue === null) {
-  //   // `queue.lanes` is used for entangling transitions. We can set it back to
-  //   // zero once the queue is empty.
-  //   queue.lanes = NoLanes;
-  // }
-
   const dispatch = queue.dispatch;
   return [hook.memoizedState, dispatch];
-}
-function updateState(initialState) {
-  return updateReducer(basicStateReducer, initialState);
 }
 
 // 创建 hook 挂载到 currentlyRenderingFiber.memoizedState。
@@ -343,8 +384,6 @@ function updateWorkInProgressHook() {
     nextCurrentHook = currentHook.next;
   }
 
-  // 什么情况下 nextWorkInProgressHook !== null ?
-  // 渲染阶段的更新
   let nextWorkInProgressHook = null;
   if (workInProgressHook === null) {
     nextWorkInProgressHook = currentlyRenderingFiber.memoizedState;
@@ -352,6 +391,8 @@ function updateWorkInProgressHook() {
     nextWorkInProgressHook = workInProgressHook.next;
   }
 
+  // 什么情况下 nextWorkInProgressHook !== null ?
+  // 渲染阶段的更新
   if (nextWorkInProgressHook !== null) {
     // There's already a work-in-progress. Reuse it.
     workInProgressHook = nextWorkInProgressHook;
@@ -385,6 +426,13 @@ function updateWorkInProgressHook() {
     }
   }
   return workInProgressHook;
+}
+
+function createFunctionComponentUpdateQueue() {
+  return {
+    lastEffect: null,
+    stores: null,
+  };
 }
 
 function isRenderPhaseUpdate() {}

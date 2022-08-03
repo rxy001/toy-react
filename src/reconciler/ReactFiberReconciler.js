@@ -1,6 +1,7 @@
 import { createFiberRoot } from "./ReactFiberRoot";
 import { createUpdate, enqueueUpdate } from "./ReactFiberClassUpdateQueue";
-import { scheduleUpdateOnFiber } from "./ReactFiberWorkLoop";
+import { scheduleUpdateOnFiber, requestEventTime } from "./ReactFiberWorkLoop";
+// import { requestUpdateLane } from "./ReactFiberLane";
 
 /**
  * 创建 rootFiber 和 fiberRoot ，rootFiber.current = fiberRoot , fiberRoot.stateNode = rootFiber
@@ -17,7 +18,6 @@ export function updateContainer(element, container, parentComponent) {
   const current = container.current;
   // const eventTime = requestEventTime();
 
-  // 使用 reactdom.render, first mount时为synclane
   // const lane = requestUpdateLane(current);
 
   const update = createUpdate();

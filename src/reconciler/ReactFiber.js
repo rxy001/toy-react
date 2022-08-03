@@ -5,14 +5,17 @@ import {
   HostText,
   IndeterminateComponent,
 } from "./ReactWorkTags";
+import { ConcurrentRoot } from "../shared/ReactRootTags";
+import { ConcurrentMode, NoMode } from "./ReactTypeOfMode";
 
-function FiberNode(tag, pendingProps, key) {
+function FiberNode(tag, pendingProps, key, mode) {
   // Instance
   this.tag = tag;
   this.key = key;
   this.elementType = null;
   this.type = null;
   this.stateNode = null;
+  this.mode = mode;
 
   // Fiber
   this.return = null;
@@ -36,12 +39,19 @@ function FiberNode(tag, pendingProps, key) {
   this.alternate = null;
 }
 
-const createFiber = function (tag, pendingProps, key) {
-  return new FiberNode(tag, pendingProps, key);
+const createFiber = function (tag, pendingProps, key, mode) {
+  return new FiberNode(tag, pendingProps, key, mode);
 };
 
 export function createHostRootFiber(tag) {
-  return createFiber(HostRoot, null, null);
+  let mode;
+  if (tag === ConcurrentRoot) {
+    mode = ConcurrentMode;
+  } else {
+    mode = NoMode;
+  }
+
+  return createFiber(HostRoot, null, null, mode);
 }
 
 export function createWorkInProgress(current, pendingProps) {

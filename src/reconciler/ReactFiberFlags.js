@@ -1,12 +1,3 @@
-/**
- * Copyright (c) Facebook, Inc. and its affiliates.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- *
- * @flow
- */
-
 // Don't change these two values. They're used by React Dev Tools.
 export const NoFlags = /*                      */ 0b00000000000000000000000000;
 export const PerformedWork = /*                */ 0b00000000000000000000000001;
@@ -46,6 +37,10 @@ export const Forked = /*                       */ 0b00000100000000000000000000;
 // This enables us to defer more work in the unmount case,
 // since we can defer traversing the tree during layout to look for Passive effects,
 // and instead rely on the static flag as a signal that there may be cleanup work.
+
+// 静态标签描述了不特定于渲染的 fiber 方面.
+// Fiber 使用了 passive effect （即使此特定渲染没有更新）。这使我们能够在卸载情况下推迟更多工作，
+// 以后我们可以在布局期间推迟遍历树查找被动效果，反而依赖静态标志作为可能存在清理工作的信号。
 export const RefStatic = /*                    */ 0b00001000000000000000000000;
 export const LayoutStatic = /*                 */ 0b00010000000000000000000000;
 export const PassiveStatic = /*                */ 0b00100000000000000000000000;
